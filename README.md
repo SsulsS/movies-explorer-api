@@ -1,3 +1,6 @@
 # movies-explorer-api
 
-Ссылка на сервер: api.movies.ssulss.nomoredomainsrocks.ru
+Ссылкb на сервер: 
+  beckand: http://api.movies.ssulss.nomoredomainsrocks.ru/
+  frontend: http://movies.ssulss.nomoredomainsrocks.ru/
+  api: 
