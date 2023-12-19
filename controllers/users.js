@@ -1,86 +1,100 @@
-const { JWT_SECRET, NODE_ENV } = process.env;
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-
+const jwt = require('jsonwebtoken');
 const User = require('../models/user');
-const BadRequest = require('../errors/BadRequest');
-const NotFound = require('../errors/NotFoundError');
-const ConflictError = require('../errors/ConflictError');
+const BadRequest = require('../utils/errors/BadRequest');
+const ErrorAccess = require('../utils/errors/ErrorAccess');
+const NotFound = require('../utils/errors/NotFound');
 
-const getUser = (req, res, next) => {
-  const userId = req.user._id;
-
-  User.findById(userId)
-    .orFail(() => {
-      throw new NotFound('Пользователь по указанному _id не найден');
-    })
-    .then((user) => res.send(user))
-    .catch(next);
+// Получение информации о текущем пользователе
+exports.getCurrentUser = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    if (!user) {
+      throw new NotFound('Пользователь не найден');
+    }
+    res.status(200).send(user);
+  } catch (error) {
+    if (error instanceof NotFound) {
+      next(error);
+    } else {
+      next(new NotFound('Ошибка при поиске пользователя'));
+    }
+  }
 };
 
-const updateUser = (req, res, next) => {
-  const { name, email } = req.body;
-  const userId = req.user._id;
+// Обновление информации о текущем пользователе
+exports.updateUser = async (req, res, next) => {
+  const { email, name } = req.body;
 
-  User.findByIdAndUpdate(userId, { name, email }, { new: true, runValidators: true })
-    .orFail(() => {
-      throw new NotFound('Пользователь с указанным _id не найден');
-    })
-    .then((user) => res.send(user))
-    .catch((err) => {
-      if (err.name === 'ValidationError' || err.name === 'CastError') {
-        throw new BadRequest('Переданы некорректные данные');
-      }
-      if (err.code === 11000) {
-        throw new ConflictError('Пользователь с таким email уже существует');
-      }
-      next(err);
-    })
-    .catch(next);
+  try {
+    const user = await User.findByIdAndUpdate(req.user._id, { email, name }, { new: true }).select('-password');
+    if (!user) {
+      throw new NotFound('Пользователь не найден');
+    }
+    res.status(200).send(user);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(error); // Это временный лог ошибки
+    if (error.name === 'MongoServerError' && error.code === 11000) {
+      next(new BadRequest('Пользователь с таким email уже существует'));
+    } else {
+      next(new BadRequest('При обновлении профиля произошла ошибка'));
+    }
+  }
 };
 
-const createUser = (req, res, next) => {
-  const { name, email, password } = req.body;
+// Регистрация нового пользователя
+exports.signup = async (req, res, next) => {
+  const { email, password, name } = req.body;
 
-  bcrypt.hash(password, 10)
-    .then((hash) => User.create({
-      name, email, password: hash,
-    }))
-    .then((({ _id }) => User.findById(_id)))
-    .then((user) => res.send(user))
-    .catch((err) => {
-      if (err.name === 'ValidationError') {
-        throw new BadRequest('Переданы некорректные данные');
-      }
-      if (err.code === 11000) {
-        throw new ConflictError('Пользователь с таким email уже существует');
-      }
-      next(err);
-    })
-    .catch(next);
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      email,
+      password: hashedPassword,
+      name,
+    });
+
+    res.status(201).send({
+      _id: user._id,
+      email: user.email,
+      name: user.name,
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(error); // Это временный лог ошибки
+    if (error.name === 'MongoServerError' && error.code === 11000) {
+      next(new BadRequest('Пользователь с таким email уже существует'));
+    } else {
+      next(new BadRequest('При регистрации профиля произошла ошибка'));
+    }
+  }
 };
 
-const login = (req, res, next) => {
+// Вход пользователя
+exports.signin = async (req, res, next) => {
   const { email, password } = req.body;
 
-  return User.findUserByCredentials(email, password)
-    .then((user) => {
-      const token = jwt.sign({ _id: user._id }, `${NODE_ENV === 'production' ? JWT_SECRET : 'yandex-praktikum'}`, { expiresIn: '7d' });
-      res.send({ token });
-    })
-    .catch(next);
-};
+  try {
+    const user = await User.findOne({ email }).select('+password');
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new ErrorAccess('Вы ввели неправильный логин или пароль.');
+    }
 
-const SIGNOUT_MESSAGE = 'Успешный выход.';
-const logout = (req, res) => {
-  res.clearCookie('jwt');
-  res.send({ message: SIGNOUT_MESSAGE });
-};
-
-module.exports = {
-  getUser,
-  updateUser,
-  createUser,
-  login,
-  logout,
+    const JWT_SECRET = process.env.JWT_SECRET || 'some-default-secret';
+    const token = jwt.sign({ _id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+    res.send({ token });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(error); // Это временный лог ошибки
+    if (error instanceof ErrorAccess) {
+      next(error);
+    } else if (error instanceof jwt.JsonWebTokenError) {
+      next(new ErrorAccess('При авторизации произошла ошибка. Токен не передан или передан не в том формате.'));
+    } else if (error instanceof jwt.TokenExpiredError) {
+      next(new ErrorAccess('При авторизации произошла ошибка. Переданный токен некорректен.'));
+    } else {
+      next(new BadRequest('Ошибка при входе пользователя'));
+    }
+  }
 };
