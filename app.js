@@ -31,8 +31,9 @@ app.use(errorLogger);
 app.use(errors());
 app.use(errorHandler);
 
-mongoose.connect(DB_ADDRESS, () => {
-  console.log('Connection successful');
+mongoose.connect(DB_ADDRESS, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 });
 
 app.listen(PORT, () => {
