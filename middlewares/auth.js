@@ -1,23 +1,24 @@
 const jwt = require('jsonwebtoken');
+const AuthError = require('../errors/AuthError');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'some-default-secret';
+const { NODE_ENV, JWT_SECRET } = process.env;
 
 module.exports = (req, res, next) => {
-  const token = req.headers.authorization;
+  const { authorization } = req.headers;
 
-  if (!token) {
-    return res.status(401).send({ message: 'Требуется авторизация' });
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    throw new AuthError('Необходима авторизация');
   }
 
+  const token = authorization.replace('Bearer ', '');
   let payload;
 
   try {
-    payload = jwt.verify(token.replace('Bearer ', ''), JWT_SECRET);
+    payload = jwt.verify(token, `${NODE_ENV === 'production' ? JWT_SECRET : 'yandex-praktikum'}`);
   } catch (err) {
-    return res.status(401).send({ message: 'Требуется авторизация' });
+    throw new AuthError('Необходима авторизация');
   }
-
   req.user = payload;
 
-  return next();
+  next();
 };
